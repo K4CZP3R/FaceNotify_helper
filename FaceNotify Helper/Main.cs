@@ -27,7 +27,7 @@ namespace FaceNotify_Helper
         private List<DeviceData> ConnectedDevices;
         private DeviceData SelectedDevice = null;
 
-        private readonly string AdbExecutablePath = Path.Combine(Directory.GetCurrentDirectory(), "platform-tools", "adb.exe");
+        private readonly string AdbExecutablePath = Path.Combine(new string[] { Directory.GetCurrentDirectory(),"unpacked","platform-tools", "adb.exe" });
         public Main()
         {
             InitializeComponent();
