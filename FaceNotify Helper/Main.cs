@@ -21,7 +21,7 @@ namespace FaceNotify_Helper
         private readonly string[] ZipFiles = { "platform-tools.zip" };
         private readonly string UnpackTo = "unpacked";
         private readonly string PackageName = "k4czp3r.facenotify";
-        private readonly string[] PermissionsToGrant = { "android.permission.READ_LOGS", "android.permission.WRITE_SECURE_SETTINGS", "android.permission.WRITE_SECURE_SETTINGS",
+        private readonly string[] PermissionsToGrant = { "android.permission.READ_LOGS", "android.permission.WRITE_SECURE_SETTINGS", "android.permission.DUMP",
               "android.permission.PACKAGE_USAGE_STATS" };
 
         private List<DeviceData> ConnectedDevices;
