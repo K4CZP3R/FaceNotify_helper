@@ -1,4 +1,6 @@
-﻿using System;
+﻿using FaceNotify_Helper.Services;
+using SharpAdbClient;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -7,84 +9,117 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Windows.Forms;
-using CoolADB;
 
 namespace FaceNotify_Helper
 {
     public partial class Main : Form
     {
-        CoolADB.ADBClient client = new ADBClient();
+        private readonly IntegrityChecker integrityChecker;
+        private readonly AdbService adbService;
+
+        private readonly string[] AppFiles = { "platform-tools.zip" };
+        private readonly string[] ZipFiles = { "platform-tools.zip" };
+        private readonly string UnpackTo = "unpacked";
+        private readonly string PackageName = "k4czp3r.facenotify";
+        private readonly string[] PermissionsToGrant = { "android.permission.READ_LOGS", "android.permission.WRITE_SECURE_SETTINGS", "android.permission.WRITE_SECURE_SETTINGS",
+              "android.permission.PACKAGE_USAGE_STATS" };
+
+        private List<DeviceData> ConnectedDevices;
+        private DeviceData SelectedDevice = null;
+
+        private readonly string AdbExecutablePath = Path.Combine(Directory.GetCurrentDirectory(), "platform-tools", "adb.exe");
         public Main()
         {
             InitializeComponent();
-            MessageBox.Show("Please wait when app configures adb...", "FaceNotify - info");
-            //Check if adb files are here
-            string[] adb_files = new string[] { "adb.exe","AdbWinApi.dll", "AdbWinUsbApi.dll" };
-            foreach(string file in adb_files)
-            {
-                if (!File.Exists(file))
-                {
-                    MessageBox.Show(String.Format("File '{0}' not found. Please redownload.", file), "FaceNotify - Error");
-                    System.Environment.Exit(1);
-                }
-            }
+            integrityChecker = new IntegrityChecker(AppFiles, ZipFiles, UnpackTo);
+            adbService = new AdbService(AdbExecutablePath);
+        }
 
-            //Define adbclient
-            
-            client.AdbPath = Directory.GetCurrentDirectory();
-
-            //Get connected devices
-            List<string> adb_devices = client.Devices();
-            bool one_good_device = false;
-            foreach(string device in adb_devices)
+        private void Main_Load(object sender, EventArgs e)
+        {
+            MessageBox.Show("App will check if all files are there and will start an ADB server.\n\nPlease wait.", "Startup checks");
+            var integrityResult = integrityChecker.IntegrityCheck();
+            if (!integrityResult.Success)
             {
-                if (device.Length > 1) one_good_device = true;
-            }
-            if (!one_good_device)
-            {
-                MessageBox.Show("Device not found! Did you enabled and granted ADB Debug?", "FaceNotify - Error");
+                MessageBox.Show(integrityResult.Data, "Integrity check failed!");
                 System.Environment.Exit(1);
             }
 
-            label_device_value.Text = adb_devices[0];
-
-        }
-
-        private void Button_grant_Click(object sender, EventArgs e)
-        {
-            MessageBox.Show("This can take a while...", "FaceNotify - Info");
-            string grant_prefix = "pm grant";
-            string pkg_name = "k4czp3r.facenotify";
-
-            string[] permissions = new string[]
+            var adbServerResult = adbService.StartServer();
+            if (!adbServerResult.Success)
             {
-                "android.permission.READ_LOGS",
-                "android.permission.DUMP",
-                "android.permission.WRITE_SECURE_SETTINGS",
-                "android.permission.PACKAGE_USAGE_STATS"
-            };
-
-            foreach(string permission in permissions)
-            {
-                client.Execute(String.Format("{0} {1} {2}", grant_prefix, pkg_name, permission),false);
+                MessageBox.Show(adbServerResult.Data, "Starting adb server failed!");
+                System.Environment.Exit(2);
             }
-            MessageBox.Show("Permissions granted! You can reboot your phone now", "FaceNotify - info");
-            
-
         }
 
-        private void Button_reboot_Click(object sender, EventArgs e)
+        private void button_refreshDevices_Click(object sender, EventArgs e) => RefreshDevices();
+
+        private void RefreshDevices()
         {
-            client.Reboot(ADBClient.BootState.System);
-            MessageBox.Show("Ka-Ching!", "FaceNotify - info");
+            ConnectedDevices = adbService.GetDevices();
+            listBox_deviceSelect.Items.Clear();
+
+            foreach (var device in ConnectedDevices)
+            {
+                if (device.State == DeviceState.Unauthorized)
+                {
+                    MessageBox.Show($"Device {device.Serial} did not authorize this computer to access ADB.\nAccept popup on your phone and try again!", "Unauthorized");
+                }
+                else
+                {
+                    listBox_deviceSelect.Items.Add($"{device.Name} - {device.State}");
+
+                }
+            }
         }
 
-        private void Button_fixadb_Click(object sender, EventArgs e)
+        private void listBox_deviceSelect_SelectedIndexChanged(object sender, EventArgs e)
         {
-            client.KillServer();
-            MessageBox.Show("Adb server stopped, please wait server starting...", "FaceNotify - info");
-            client.StartServer();
-            MessageBox.Show("Adb server started, you can try to grant permissions now", "FaceNotify - info");
+            if (listBox_deviceSelect.SelectedIndex == -1) return;
+            var device = ConnectedDevices[listBox_deviceSelect.SelectedIndex];
+            string infoTemplate = $"Name: {device.Name}\nState: {device.State}\nSerial: {device.Serial}";
+            label_selectedDeviceInfo.Text = infoTemplate;
+            button_grantPermissions.Enabled = true;
+            SelectedDevice = device;
+        }
+
+        private void button_grantPermissions_Click(object sender, EventArgs e)
+        {
+            if (SelectedDevice == null)
+            {
+                MessageBox.Show("Please select a device from the list", "No device selected!"); return;
+            }
+
+            string messageTemplate = $"The following permissions will be granted for '{PackageName}'";
+            foreach (string permission in PermissionsToGrant)
+            {
+                messageTemplate += $"\n{permission}";
+            }
+            messageTemplate += "\nAre OK with that?";
+            var diagResult = MessageBox.Show(messageTemplate, "Confirmation", MessageBoxButtons.OKCancel);
+            if (diagResult != DialogResult.OK)
+            {
+                MessageBox.Show("Aborted.", "Granting permissions");
+                return;
+            }
+
+            foreach (string permission in PermissionsToGrant)
+            {
+                var res = adbService.GrantPermission(SelectedDevice, PackageName, permission);
+                if (!res.Success)
+                {
+                    MessageBox.Show(res.Data, "Something went wrong!");
+                    return;
+                }
+            }
+
+            MessageBox.Show("Permissions granted!", "Success");
+
+
+
+
+
         }
     }
 }
